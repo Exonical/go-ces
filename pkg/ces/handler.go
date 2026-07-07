@@ -35,7 +35,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeFault(w, http.StatusBadRequest, "Failed to read request body")
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	env, err := soap.ParseEnvelope(body)
 	if err != nil {
@@ -172,7 +172,7 @@ func (h *Handler) writeResponse(w http.ResponseWriter, result *backend.Enrollmen
 
 	w.Header().Set("Content-Type", soap.ContentType)
 	w.WriteHeader(http.StatusOK)
-	w.Write(out)
+	_, _ = w.Write(out)
 }
 
 func (h *Handler) writeFault(w http.ResponseWriter, status int, reason string) {
@@ -187,5 +187,5 @@ func (h *Handler) writeFault(w http.ResponseWriter, status int, reason string) {
 	}
 	w.Header().Set("Content-Type", soap.ContentType)
 	w.WriteHeader(status)
-	w.Write(out)
+	_, _ = w.Write(out)
 }

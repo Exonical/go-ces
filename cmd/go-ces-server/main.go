@@ -42,7 +42,7 @@ func main() {
 	// Health check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "ok")
+		_, _ = fmt.Fprintln(w, "ok")
 	})
 
 	log.Printf("go-ces-server starting on %s", *addr)
