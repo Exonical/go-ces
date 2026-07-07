@@ -2,27 +2,46 @@
 // for the MS-XCEP and MS-WSTEP protocols.
 package soap
 
-import "encoding/xml"
+import (
+	"crypto/rand"
+	"encoding/xml"
+	"fmt"
+)
 
 const (
-	NS12      = "http://www.w3.org/2003/05/soap-envelope"
-	NSAddr    = "http://www.w3.org/2005/08/addressing"
+	NS12        = "http://www.w3.org/2003/05/soap-envelope"
+	NSAddr      = "http://www.w3.org/2005/08/addressing"
 	ContentType = "application/soap+xml; charset=utf-8"
 )
 
 // Envelope represents a SOAP 1.2 envelope.
 type Envelope struct {
-	XMLName xml.Name `xml:"s:Envelope"`
-	NS      string   `xml:"xmlns:s,attr"`
-	NSAddr  string   `xml:"xmlns:a,attr,omitempty"`
-	Header  Header   `xml:"s:Header"`
-	Body    Body     `xml:"s:Body"`
+	XMLName xml.Name       `xml:"s:Envelope"`
+	NS      string         `xml:"xmlns:s,attr"`
+	NSAddr  string         `xml:"xmlns:a,attr,omitempty"`
+	Header  EnvelopeHeader `xml:"s:Header"`
+	Body    Body           `xml:"s:Body"`
+}
+
+// EnvelopeHeader is the marshal-side SOAP header for responses.
+type EnvelopeHeader struct {
+	Action    *Action `xml:"a:Action,omitempty"`
+	MessageID string  `xml:"a:MessageID,omitempty"`
+	RelatesTo string  `xml:"a:RelatesTo,omitempty"`
+}
+
+// Action is a WS-Addressing Action header carrying s:mustUnderstand="1",
+// which Windows WWSAPI clients require on responses.
+type Action struct {
+	MustUnderstand string `xml:"s:mustUnderstand,attr,omitempty"`
+	Value          string `xml:",chardata"`
 }
 
 // Header contains WS-Addressing and security elements.
 type Header struct {
-	Action    string     `xml:"a:Action,omitempty"`
+	Action    string    `xml:"a:Action,omitempty"`
 	MessageID string    `xml:"a:MessageID,omitempty"`
+	RelatesTo string    `xml:"a:RelatesTo,omitempty"`
 	ReplyTo   *ReplyTo  `xml:"a:ReplyTo,omitempty"`
 	To        string    `xml:"a:To,omitempty"`
 	Security  *Security `xml:"Security,omitempty"`
@@ -85,12 +104,12 @@ func ParseHeader(raw []byte) (*Header, error) {
 	wrapped = append(wrapped, []byte(`</H>`)...)
 
 	type headerWrap struct {
-		XMLName   xml.Name       `xml:"H"`
-		Action    string         `xml:"Action,omitempty"`
-		MessageID string         `xml:"MessageID,omitempty"`
-		To        string         `xml:"To,omitempty"`
-		ReplyTo   *ReplyTo       `xml:"ReplyTo,omitempty"`
-		Security  *Security      `xml:"Security,omitempty"`
+		XMLName   xml.Name  `xml:"H"`
+		Action    string    `xml:"Action,omitempty"`
+		MessageID string    `xml:"MessageID,omitempty"`
+		To        string    `xml:"To,omitempty"`
+		ReplyTo   *ReplyTo  `xml:"ReplyTo,omitempty"`
+		Security  *Security `xml:"Security,omitempty"`
 	}
 
 	var h headerWrap
@@ -109,16 +128,28 @@ func ParseHeader(raw []byte) (*Header, error) {
 }
 
 // NewEnvelope creates a SOAP 1.2 envelope with the given action and body content.
-func NewEnvelope(action, messageID string, body []byte) *Envelope {
+// relatesTo should be the MessageID of the request being answered; Windows
+// WWSAPI clients reject responses without a RelatesTo header.
+func NewEnvelope(action, relatesTo string, body []byte) *Envelope {
 	return &Envelope{
 		NS:     NS12,
 		NSAddr: NSAddr,
-		Header: Header{
-			Action:    action,
-			MessageID: messageID,
+		Header: EnvelopeHeader{
+			Action:    &Action{MustUnderstand: "1", Value: action},
+			MessageID: NewMessageID(),
+			RelatesTo: relatesTo,
 		},
 		Body: Body{InnerXML: body},
 	}
+}
+
+// NewMessageID generates a random urn:uuid WS-Addressing message ID.
+func NewMessageID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("urn:uuid:%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // Marshal serializes a SOAP envelope to XML bytes with the XML declaration.

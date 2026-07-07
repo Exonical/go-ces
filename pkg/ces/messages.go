@@ -23,6 +23,7 @@ const (
 	// BinarySecurityToken ValueTypes
 	ValueTypePKCS10 = "http://schemas.microsoft.com/windows/pki/2009/01/enrollment#PKCS10"
 	ValueTypePKCS7  = "http://schemas.microsoft.com/windows/pki/2009/01/enrollment#PKCS7"
+	ValueTypeX509v3 = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3"
 
 	// EncodingType
 	EncodingTypeBase64 = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd#base64binary"
@@ -35,17 +36,18 @@ const (
 
 // RequestSecurityToken (RST) is the MS-WSTEP enrollment request.
 type RequestSecurityToken struct {
-	XMLName            xml.Name            `xml:"RequestSecurityToken"`
-	TokenType          string              `xml:"TokenType,omitempty"`
-	RequestType        string              `xml:"RequestType"`
+	XMLName             xml.Name             `xml:"RequestSecurityToken"`
+	TokenType           string               `xml:"TokenType,omitempty"`
+	RequestType         string               `xml:"RequestType"`
 	BinarySecurityToken *BinarySecurityToken `xml:"BinarySecurityToken,omitempty"`
-	AdditionalContext  *AdditionalContext  `xml:"AdditionalContext,omitempty"`
-	RequestID          string              `xml:"RequestID,omitempty"`
+	AdditionalContext   *AdditionalContext   `xml:"AdditionalContext,omitempty"`
+	RequestID           string               `xml:"RequestID,omitempty"`
 }
 
 // BinarySecurityToken carries the PKCS#10 CSR or PKCS#7 renewal request.
 type BinarySecurityToken struct {
 	XMLName      xml.Name `xml:"BinarySecurityToken"`
+	XMLNS        string   `xml:"xmlns,attr,omitempty"`
 	ValueType    string   `xml:"ValueType,attr"`
 	EncodingType string   `xml:"EncodingType,attr"`
 	Value        string   `xml:",chardata"`
@@ -53,8 +55,8 @@ type BinarySecurityToken struct {
 
 // AdditionalContext carries extra enrollment parameters.
 type AdditionalContext struct {
-	XMLName     xml.Name         `xml:"AdditionalContext"`
-	ContextItems []ContextItem   `xml:"ContextItem"`
+	XMLName      xml.Name      `xml:"AdditionalContext"`
+	ContextItems []ContextItem `xml:"ContextItem"`
 }
 
 // ContextItem is a name-value pair in AdditionalContext.
@@ -65,23 +67,37 @@ type ContextItem struct {
 
 // RequestSecurityTokenResponseCollection wraps one or more RSTR elements.
 type RequestSecurityTokenResponseCollection struct {
-	XMLName   xml.Name                     `xml:"RequestSecurityTokenResponseCollection"`
-	XMLNS     string                       `xml:"xmlns,attr"`
+	XMLName   xml.Name                       `xml:"RequestSecurityTokenResponseCollection"`
+	XMLNS     string                         `xml:"xmlns,attr"`
 	Responses []RequestSecurityTokenResponse `xml:"RequestSecurityTokenResponse"`
 }
 
-// RequestSecurityTokenResponse (RSTR) is the enrollment response.
+// RequestSecurityTokenResponse (RSTR) is the enrollment response. Per the
+// MS-WSTEP response shape, the RSTR-level BinarySecurityToken carries the
+// full PKCS#7 while RequestedSecurityToken carries the leaf certificate.
 type RequestSecurityTokenResponse struct {
-	XMLName             xml.Name             `xml:"RequestSecurityTokenResponse"`
-	TokenType           string               `xml:"TokenType,omitempty"`
-	DispositionMessage  *DispositionMessage  `xml:"DispositionMessage,omitempty"`
+	XMLName                xml.Name                `xml:"RequestSecurityTokenResponse"`
+	TokenType              string                  `xml:"TokenType,omitempty"`
+	DispositionMessage     *DispositionMessage     `xml:"DispositionMessage,omitempty"`
+	BinarySecurityToken    *BinarySecurityToken    `xml:"BinarySecurityToken,omitempty"`
 	RequestedSecurityToken *RequestedSecurityToken `xml:"RequestedSecurityToken,omitempty"`
-	RequestID           string               `xml:"RequestID,omitempty"`
+	RequestID              *RequestID              `xml:"RequestID,omitempty"`
+}
+
+// RequestID is the MS-WSTEP request identifier element. It lives in the
+// enrollment namespace and is nillable.
+type RequestID struct {
+	XMLName  xml.Name `xml:"RequestID"`
+	XMLNS    string   `xml:"xmlns,attr,omitempty"`
+	XMLNSXSI string   `xml:"xmlns:xsi,attr,omitempty"`
+	Nil      bool     `xml:"xsi:nil,attr,omitempty"`
+	Value    string   `xml:",chardata"`
 }
 
 // DispositionMessage indicates the enrollment result status.
 type DispositionMessage struct {
 	XMLName xml.Name `xml:"DispositionMessage"`
+	XMLNS   string   `xml:"xmlns,attr,omitempty"`
 	Lang    string   `xml:"xml:lang,attr,omitempty"`
 	Value   string   `xml:",chardata"`
 }

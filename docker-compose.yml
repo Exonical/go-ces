@@ -16,6 +16,28 @@ services:
       timeout: 3s
       retries: 10
 
+  cert-init:
+    image: smallstep/step-ca:latest
+    depends_on:
+      step-ca:
+        condition: service_healthy
+    volumes:
+      - step-ca-data:/home/step
+      - go-ces-tls:/tls
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        step certificate create go-ces /tls/server.crt /tls/server.key \
+          --profile leaf \
+          --ca /home/step/certs/intermediate_ca.crt \
+          --ca-key /home/step/secrets/intermediate_ca_key \
+          --ca-password-file /home/step/secrets/password \
+          --san go-ces --san localhost --san 127.0.0.1 \
+          --not-after 8760h --no-password --insecure --force
+        cat /home/step/certs/intermediate_ca.crt >> /tls/server.crt
+        cp /home/step/certs/root_ca.crt /tls/root_ca.crt
+
   go-ces:
     build: .
     ports:
@@ -23,9 +45,19 @@ services:
     environment:
       CES_LISTEN_ADDR: ":8443"
       CES_CA_URL: "https://step-ca:9000"
+      CES_TLS_CERT: "/tls/server.crt"
+      CES_TLS_KEY: "/tls/server.key"
+      CES_ADVERTISED_URL: "https://localhost:8443/CES/service.svc/CES"
+      CES_DEBUG: "1"
+      CES_MOCK_CA_DIR: "/mock-ca"
+    volumes:
+      - go-ces-tls:/tls:ro
+      - mock-ca:/mock-ca
     depends_on:
-      step-ca:
-        condition: service_healthy
+      cert-init:
+        condition: service_completed_successfully
 
 volumes:
   step-ca-data:
+  go-ces-tls:
+  mock-ca:

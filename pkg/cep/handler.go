@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/Exonical/go-ces/backend"
 	"github.com/Exonical/go-ces/pkg/soap"
@@ -66,7 +67,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	soapEnv := soap.NewEnvelope(ActionGetPoliciesResponse, "", respBytes)
+	soapEnv := soap.NewEnvelope(ActionGetPoliciesResponse, header.MessageID, respBytes)
 	out, err := soap.Marshal(soapEnv)
 	if err != nil {
 		h.writeFault(w, http.StatusInternalServerError, "Failed to marshal SOAP envelope")
@@ -80,7 +81,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) buildResponse(pr *backend.PolicyResponse) *GetPoliciesResponse {
 	resp := &GetPoliciesResponse{
-		XMLNS: NSEnrollmentPolicy,
+		XMLNS:    NSEnrollmentPolicy,
+		XMLNSXSI: NSXSI,
+		Response: Response{
+			PolicyFriendlyName: NilValue(),
+			NextUpdateHours:    NilValue(),
+			PoliciesNotChanged: NilValue(),
+		},
+	}
+	if len(pr.Policies) > 0 {
+		resp.Response.PolicyID = pr.Policies[0].PolicyID
 	}
 
 	for _, p := range pr.Policies {
@@ -99,34 +109,47 @@ func (h *Handler) buildResponse(pr *backend.PolicyResponse) *GetPoliciesResponse
 					AutoEnroll: p.Attributes.PermissionAutoEnroll,
 				},
 				PrivateKeyAttributes: PrivateKeyAttributes{
-					MinimalKeyLength: p.Attributes.KeyLength,
-					KeySpec:          intPtr(p.Attributes.KeySpec),
+					MinimalKeyLength:      p.Attributes.KeyLength,
+					KeySpec:               Value(strconv.Itoa(p.Attributes.KeySpec)),
+					KeyUsageProperty:      NilValue(),
+					Permissions:           NilValue(),
+					AlgorithmOIDReference: NilValue(),
+					CryptoProviders:       CryptoProviders{Nil: true},
 				},
-				Revision: Revision{MajorRevision: 100, MinorRevision: 1},
+				Revision:                  Revision{MajorRevision: 100, MinorRevision: 1},
+				SupersededPolicies:        SupersededPolicies{Nil: true},
+				PrivateKeyFlags:           NilValue(),
+				SubjectNameFlags:          NilValue(),
+				EnrollmentFlags:           NilValue(),
+				GeneralFlags:              NilValue(),
+				HashAlgorithmOIDReference: NilValue(),
+				RARequirements:            RARequirements{Nil: true},
+				KeyArchivalAttributes:     KeyArchivalAttributes{Nil: true},
+				Extensions:                Extensions{Nil: true},
 			},
 		}
 		if len(p.Attributes.CryptoProviders) > 0 {
-			policy.Attributes.PrivateKeyAttributes.CryptoProviders = &CryptoProviders{
+			policy.Attributes.PrivateKeyAttributes.CryptoProviders = CryptoProviders{
 				Provider: p.Attributes.CryptoProviders,
 			}
 		}
 		if p.Attributes.HashAlgorithmOIDRef > 0 {
-			policy.Attributes.HashAlgorithmOIDReference = &p.Attributes.HashAlgorithmOIDRef
+			policy.Attributes.HashAlgorithmOIDReference = Value(strconv.Itoa(p.Attributes.HashAlgorithmOIDRef))
 		}
 		if p.Attributes.PrivateKeyFlags != 0 {
-			policy.Attributes.PrivateKeyFlags = &p.Attributes.PrivateKeyFlags
+			policy.Attributes.PrivateKeyFlags = Value(strconv.FormatUint(uint64(p.Attributes.PrivateKeyFlags), 10))
 		}
 		if p.Attributes.SubjectNameFlags != 0 {
-			policy.Attributes.SubjectNameFlags = &p.Attributes.SubjectNameFlags
+			policy.Attributes.SubjectNameFlags = Value(strconv.FormatUint(uint64(p.Attributes.SubjectNameFlags), 10))
 		}
 		if p.Attributes.EnrollmentFlags != 0 {
-			policy.Attributes.EnrollmentFlags = &p.Attributes.EnrollmentFlags
+			policy.Attributes.EnrollmentFlags = Value(strconv.FormatUint(uint64(p.Attributes.EnrollmentFlags), 10))
 		}
 		if p.Attributes.GeneralFlags != 0 {
-			policy.Attributes.GeneralFlags = &p.Attributes.GeneralFlags
+			policy.Attributes.GeneralFlags = Value(strconv.FormatUint(uint64(p.Attributes.GeneralFlags), 10))
 		}
 		if len(p.Attributes.Extensions) > 0 {
-			exts := &Extensions{}
+			exts := Extensions{}
 			for _, e := range p.Attributes.Extensions {
 				exts.Extension = append(exts.Extension, Extension{
 					OIDReference: e.OIDReference,
@@ -142,7 +165,12 @@ func (h *Handler) buildResponse(pr *backend.PolicyResponse) *GetPoliciesResponse
 	for _, ca := range pr.CAs {
 		uris := CARICollection{}
 		for _, u := range ca.URIs {
-			uris.URI = append(uris.URI, CAURI{Value: u, ClientAuth: 1})
+			uris.URI = append(uris.URI, CAURI{
+				ClientAuthentication: 4,
+				URI:                  u,
+				Priority:             Value("1"),
+				RenewalOnly:          false,
+			})
 		}
 		resp.CAs.CA = append(resp.CAs.CA, CA{
 			URIs:                 uris,
@@ -184,11 +212,4 @@ func findPolicyOIDRef(p backend.CertificateEnrollmentPolicy, oids []backend.OIDD
 		return p.OIDReferences[0]
 	}
 	return 0
-}
-
-func intPtr(v int) *int {
-	if v == 0 {
-		return nil
-	}
-	return &v
 }

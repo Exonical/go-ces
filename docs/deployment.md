@@ -85,6 +85,7 @@ The server's TLS certificate must be trusted by Windows clients. Options:
 | `CES_LISTEN_ADDR` | `:8443` | Listen address |
 | `CES_TLS_CERT` | | Path to TLS certificate |
 | `CES_TLS_KEY` | | Path to TLS private key |
+| `CES_ADVERTISED_URL` | `https://localhost:8443/CES/service.svc/CES` | CES URL advertised in CEP policy responses |
 | `CES_CA_URL` | | Smallstep CA URL |
 | `CES_CA_ROOT` | | Path to CA root cert (for TLS to step-ca) |
 | `CES_PROVISIONER` | | step-ca provisioner name |

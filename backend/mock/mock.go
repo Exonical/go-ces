@@ -9,7 +9,11 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
+	"errors"
 	"math/big"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Exonical/go-ces/backend"
@@ -23,6 +27,58 @@ type Signer struct {
 
 	// PendingRequestIDs tracks requests that should be returned as pending.
 	PendingRequestIDs map[string]bool
+}
+
+// NewPersistentSigner creates a mock Signer whose CA certificate and key are
+// loaded from dir if present, or generated and saved there otherwise. This
+// keeps the CA stable across restarts so clients only need to trust it once.
+func NewPersistentSigner(dir string) (*Signer, error) {
+	certPath := filepath.Join(dir, "ca.crt")
+	keyPath := filepath.Join(dir, "ca.key")
+
+	certPEM, certErr := os.ReadFile(certPath)
+	keyPEM, keyErr := os.ReadFile(keyPath)
+	if certErr == nil && keyErr == nil {
+		certBlock, _ := pem.Decode(certPEM)
+		keyBlock, _ := pem.Decode(keyPEM)
+		if certBlock == nil || keyBlock == nil {
+			return nil, errors.New("mock: invalid PEM in persisted CA files")
+		}
+		cert, err := x509.ParseCertificate(certBlock.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		key, err := x509.ParseECPrivateKey(keyBlock.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		return &Signer{
+			IssuerCert:        cert,
+			IssuerKey:         key,
+			PendingRequestIDs: make(map[string]bool),
+		}, nil
+	}
+
+	s, err := NewSigner()
+	if err != nil {
+		return nil, err
+	}
+	keyDER, err := x509.MarshalECPrivateKey(s.IssuerKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	certOut := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.IssuerCert.Raw})
+	keyOut := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := os.WriteFile(certPath, certOut, 0o644); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(keyPath, keyOut, 0o600); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // NewSigner creates a mock Signer with a self-signed CA.
@@ -67,9 +123,14 @@ func (s *Signer) Enroll(_ context.Context, csr *x509.CertificateRequest, _ strin
 		return nil, err
 	}
 
+	subject := csr.Subject
+	if subject.CommonName == "" && len(csr.DNSNames) == 0 && len(csr.EmailAddresses) == 0 {
+		subject.CommonName = "go-ces User"
+	}
+
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      csr.Subject,
+		Subject:      subject,
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
@@ -123,9 +184,9 @@ func NewPolicyProvider() *PolicyProvider {
 		Policies: &backend.PolicyResponse{
 			Policies: []backend.CertificateEnrollmentPolicy{
 				{
-					PolicyID:     "{083C7011-1D0A-4855-885D-AC945184658C}",
-					CommonName:   "User",
-					PolicySchema: 3,
+					PolicyID:      "{083C7011-1D0A-4855-885D-AC945184658C}",
+					CommonName:    "User",
+					PolicySchema:  3,
 					OIDReferences: []int{1, 2},
 					CAReferences:  []int{0},
 					Attributes: backend.PolicyAttributes{
@@ -151,7 +212,7 @@ func NewPolicyProvider() *PolicyProvider {
 			OIDs: []backend.OIDDefinition{
 				{ReferenceID: 1, Value: "1.3.6.1.4.1.311.20.2", Group: 6, DefaultName: "Certificate Template Name"},
 				{ReferenceID: 2, Value: "2.5.29.15", Group: 3, DefaultName: "Key Usage"},
-				{ReferenceID: 3, Value: "2.16.840.1.101.3.4.2.1", Group: 0, DefaultName: "sha256"},
+				{ReferenceID: 3, Value: "2.16.840.1.101.3.4.2.1", Group: 1, DefaultName: "sha256"},
 			},
 		},
 	}

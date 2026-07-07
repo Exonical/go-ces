@@ -1,0 +1,3 @@
+# Local certificate artifacts from dev/testing
+*.crt
+*.key

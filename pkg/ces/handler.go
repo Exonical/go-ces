@@ -64,15 +64,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Determine the operation type
 	switch {
 	case rst.RequestID != "":
-		h.handlePoll(w, r, &rst)
+		h.handlePoll(w, r, &rst, header.MessageID)
 	case rst.BinarySecurityToken != nil:
-		h.handleEnroll(w, r, &rst)
+		h.handleEnroll(w, r, &rst, header.MessageID)
 	default:
 		h.writeFault(w, http.StatusBadRequest, "Missing BinarySecurityToken or RequestID")
 	}
 }
 
-func (h *Handler) handleEnroll(w http.ResponseWriter, r *http.Request, rst *RequestSecurityToken) {
+func (h *Handler) handleEnroll(w http.ResponseWriter, r *http.Request, rst *RequestSecurityToken, relatesTo string) {
 	// Decode the CSR from the BinarySecurityToken
 	csrDER, err := base64.StdEncoding.DecodeString(
 		strings.TrimSpace(rst.BinarySecurityToken.Value))
@@ -83,8 +83,15 @@ func (h *Handler) handleEnroll(w http.ResponseWriter, r *http.Request, rst *Requ
 
 	csr, err := x509.ParseCertificateRequest(csrDER)
 	if err != nil {
-		h.writeFault(w, http.StatusBadRequest, "Invalid PKCS#10 certificate request")
-		return
+		// Windows clients wrap the PKCS#10 in a CMC full PKI request (PKCS#7)
+		inner, cmcErr := extractCSRFromCMC(csrDER)
+		if cmcErr == nil {
+			csr, err = x509.ParseCertificateRequest(inner)
+		}
+		if err != nil {
+			h.writeFault(w, http.StatusBadRequest, "Invalid PKCS#10 or CMC certificate request")
+			return
+		}
 	}
 
 	if err := csr.CheckSignature(); err != nil {
@@ -106,10 +113,10 @@ func (h *Handler) handleEnroll(w http.ResponseWriter, r *http.Request, rst *Requ
 		return
 	}
 
-	h.writeResponse(w, result)
+	h.writeResponse(w, result, relatesTo)
 }
 
-func (h *Handler) handlePoll(w http.ResponseWriter, r *http.Request, rst *RequestSecurityToken) {
+func (h *Handler) handlePoll(w http.ResponseWriter, r *http.Request, rst *RequestSecurityToken, relatesTo string) {
 	result, err := h.signer.Poll(r.Context(), rst.RequestID)
 	if err != nil {
 		h.writeFault(w, http.StatusInternalServerError,
@@ -117,38 +124,58 @@ func (h *Handler) handlePoll(w http.ResponseWriter, r *http.Request, rst *Reques
 		return
 	}
 
-	h.writeResponse(w, result)
+	h.writeResponse(w, result, relatesTo)
 }
 
-func (h *Handler) writeResponse(w http.ResponseWriter, result *backend.EnrollmentResult) {
+func (h *Handler) writeResponse(w http.ResponseWriter, result *backend.EnrollmentResult, relatesTo string) {
 	rstr := RequestSecurityTokenResponse{
 		TokenType: TokenTypeX509v3,
 	}
 
 	switch result.Status {
 	case backend.Issued:
-		certB64 := base64.StdEncoding.EncodeToString(result.CertificateRaw)
+		p7 := result.CertificateRaw
+		if wrapped, err := marshalCertsOnlyPKCS7(result.CertificateRaw); err == nil {
+			p7 = wrapped
+		}
+		rstr.BinarySecurityToken = &BinarySecurityToken{
+			XMLNS:        NSWSSecurity,
+			ValueType:    ValueTypePKCS7,
+			EncodingType: EncodingTypeBase64,
+			Value:        base64.StdEncoding.EncodeToString(p7),
+		}
 		rstr.RequestedSecurityToken = &RequestedSecurityToken{
 			BinarySecurityToken: &BinarySecurityToken{
-				ValueType:    ValueTypePKCS7,
+				XMLNS:        NSWSSecurity,
+				ValueType:    ValueTypeX509v3,
 				EncodingType: EncodingTypeBase64,
-				Value:        certB64,
+				Value:        base64.StdEncoding.EncodeToString(result.CertificateRaw),
 			},
 		}
 		rstr.DispositionMessage = &DispositionMessage{
+			XMLNS: NSEnrollment,
 			Lang:  "en-US",
-			Value: DispositionIssued,
+			Value: "Issued",
+		}
+		rstr.RequestID = &RequestID{
+			XMLNS: NSEnrollment,
+			Value: "1",
 		}
 	case backend.Pending:
-		rstr.RequestID = result.RequestID
+		rstr.RequestID = &RequestID{
+			XMLNS: NSEnrollment,
+			Value: result.RequestID,
+		}
 		rstr.DispositionMessage = &DispositionMessage{
+			XMLNS: NSEnrollment,
 			Lang:  "en-US",
-			Value: DispositionPending,
+			Value: "Pending",
 		}
 	case backend.Rejected:
 		rstr.DispositionMessage = &DispositionMessage{
+			XMLNS: NSEnrollment,
 			Lang:  "en-US",
-			Value: DispositionDenied,
+			Value: "Denied",
 		}
 	}
 
@@ -163,7 +190,7 @@ func (h *Handler) writeResponse(w http.ResponseWriter, result *backend.Enrollmen
 		return
 	}
 
-	soapEnv := soap.NewEnvelope(ActionRSTR, "", respBytes)
+	soapEnv := soap.NewEnvelope(ActionRSTR, relatesTo, respBytes)
 	out, err := soap.Marshal(soapEnv)
 	if err != nil {
 		h.writeFault(w, http.StatusInternalServerError, "Failed to marshal SOAP envelope")

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/xml"
 	"io"
@@ -118,8 +119,8 @@ func TestHandler_Enroll(t *testing.T) {
 	}
 
 	rstr := collection.Responses[0]
-	if rstr.DispositionMessage == nil || rstr.DispositionMessage.Value != DispositionIssued {
-		t.Errorf("disposition = %v, want %q", rstr.DispositionMessage, DispositionIssued)
+	if rstr.DispositionMessage == nil || rstr.DispositionMessage.Value != "Issued" {
+		t.Errorf("disposition = %v, want %q", rstr.DispositionMessage, "Issued")
 	}
 	if rstr.RequestedSecurityToken == nil {
 		t.Fatal("expected RequestedSecurityToken to be non-nil")
@@ -128,7 +129,20 @@ func TestHandler_Enroll(t *testing.T) {
 		t.Fatal("expected BinarySecurityToken in response")
 	}
 
-	// Verify the returned certificate can be decoded
+	// Verify the RSTR-level certs-only PKCS#7 token is well formed
+	if rstr.BinarySecurityToken == nil {
+		t.Fatal("expected RSTR-level BinarySecurityToken")
+	}
+	p7DER, err := base64.StdEncoding.DecodeString(rstr.BinarySecurityToken.Value)
+	if err != nil {
+		t.Fatalf("failed to decode PKCS#7 token: %v", err)
+	}
+	var ci contentInfo
+	if _, err := asn1.Unmarshal(p7DER, &ci); err != nil {
+		t.Fatalf("token is not a valid PKCS#7 structure: %v", err)
+	}
+
+	// Verify the leaf certificate in RequestedSecurityToken
 	certDER, err := base64.StdEncoding.DecodeString(
 		rstr.RequestedSecurityToken.BinarySecurityToken.Value)
 	if err != nil {
@@ -191,11 +205,11 @@ func TestHandler_Poll_Pending(t *testing.T) {
 		t.Fatalf("expected 1 response, got %d", len(collection.Responses))
 	}
 	rstr := collection.Responses[0]
-	if rstr.DispositionMessage == nil || rstr.DispositionMessage.Value != DispositionPending {
+	if rstr.DispositionMessage == nil || rstr.DispositionMessage.Value != "Pending" {
 		t.Errorf("disposition = %v, want pending", rstr.DispositionMessage)
 	}
-	if rstr.RequestID != "req-123" {
-		t.Errorf("requestID = %q, want %q", rstr.RequestID, "req-123")
+	if rstr.RequestID == nil || rstr.RequestID.Value != "req-123" {
+		t.Errorf("requestID = %v, want %q", rstr.RequestID, "req-123")
 	}
 }
 
