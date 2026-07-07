@@ -1,0 +1,31 @@
+services:
+  step-ca:
+    image: smallstep/step-ca:latest
+    environment:
+      DOCKER_STEPCA_INIT_NAME: "Go-CES Test CA"
+      DOCKER_STEPCA_INIT_DNS_NAMES: "step-ca,localhost"
+      DOCKER_STEPCA_INIT_REMOTE_MANAGEMENT: "true"
+      DOCKER_STEPCA_INIT_PROVISIONER_NAME: "ces-provisioner"
+    ports:
+      - "9000:9000"
+    volumes:
+      - step-ca-data:/home/step
+    healthcheck:
+      test: ["CMD", "step", "ca", "health", "--ca-url", "https://localhost:9000", "--root", "/home/step/certs/root_ca.crt"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  go-ces:
+    build: .
+    ports:
+      - "8443:8443"
+    environment:
+      CES_LISTEN_ADDR: ":8443"
+      CES_CA_URL: "https://step-ca:9000"
+    depends_on:
+      step-ca:
+        condition: service_healthy
+
+volumes:
+  step-ca-data:
